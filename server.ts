@@ -264,6 +264,79 @@ JSON Schema:
     { "text": "Auditing text finding", "type": "warn" }
   ]
 }`;
+  async function callLLM(prompt: string, textContext?: string): Promise<string> {
+    const fullPrompt = textContext ? `${prompt}\n\nEkstrak dari teks RAB berikut:\n${textContext}` : prompt;
+
+    // 1. OpenRouter
+    if (process.env.OPENROUTER_API_KEY) {
+      const model = process.env.OPENROUTER_MODEL || "meta-llama/llama-3-8b-instruct:free";
+      console.log(`[LLM] Calling OpenRouter with model: ${model}`);
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://github.com/pcchopath-sys/analyza-pro",
+          "X-Title": "Analyza Pro"
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: [{ role: "user", content: fullPrompt }],
+          response_format: { type: "json_object" }
+        })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
+      }
+      
+      const data = await response.json() as any;
+      return data.choices?.[0]?.message?.content || "";
+    }
+
+    // 2. OpenAI Compatible
+    if (process.env.OPENAI_API_KEY) {
+      const baseUrl = (process.env.OPENAI_API_BASE || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
+      const model = process.env.OPENAI_MODEL || "gpt-4o";
+      console.log(`[LLM] Calling OpenAI Compatible API at ${baseUrl} with model: ${model}`);
+      
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: [{ role: "user", content: fullPrompt }],
+          response_format: { type: "json_object" }
+        })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`OpenAI API error: ${response.status} - ${errorText}`);
+      }
+      
+      const data = await response.json() as any;
+      return data.choices?.[0]?.message?.content || "";
+    }
+
+    // 3. Fallback to Gemini API
+    if (process.env.GEMINI_API_KEY) {
+      console.log(`[LLM] Falling back to Gemini API (gemini-2.5-flash)`);
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const chatResult = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: fullPrompt,
+        config: { responseMimeType: 'application/json' }
+      });
+      return chatResult.text || "";
+    }
+
+    throw new Error("No LLM API keys configured! Please set OPENROUTER_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.");
+  }
 
   const backgroundTasks = new Map<string, { status: string, result?: any, error?: string }>();
 
@@ -340,17 +413,10 @@ JSON Schema:
         // 2. LLM Text-only fallback (Cheaper than File API)
         if (!parsed && pdfText && pdfText.length > 50) {
           console.log("Using LLM Text Fallback...");
-          const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-          const chatResult = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: generatePrompt() + "\n\nEkstrak dari teks RAB berikut:\n" + pdfText.substring(0, 30000), // Limit to 30k chars
-            config: { responseMimeType: 'application/json' }
-          });
-          
-          let jsonResponse = chatResult.text;
+          const jsonResponse = await callLLM(generatePrompt(), pdfText.substring(0, 30000));
           if (jsonResponse) {
-            jsonResponse = jsonResponse.replace(/```json\n?/g, '').replace(/```/g, '').trim();
-            parsed = JSON.parse(jsonResponse);
+            const cleaned = jsonResponse.replace(/```json\n?/g, '').replace(/```/g, '').trim();
+            parsed = JSON.parse(cleaned);
             parsed.audit.unshift({ text: "Sistem menerapkan analisis teks semantik untuk memproses format yang tidak standar.", type: "info" });
           }
         }
@@ -452,33 +518,58 @@ JSON Schema:
         const tempPath = path.join(os.tmpdir(), `${file.file_id}.pdf`);
         fs.writeFileSync(tempPath, Buffer.from(buffer));
         
-        // Use Gemini API to analyze the PDF
-        const uploadResponse = await ai.files.upload({
-          file: tempPath,
-          config: {
-            mimeType: "application/pdf"
+        let jsonResponse = "";
+        let parsedWithText = false;
+        
+        // 1. Try local PDF text extraction first
+        try {
+          const pdfParseModule = await import("pdf-parse");
+          const pdfParse = (pdfParseModule as any).default || pdfParseModule;
+          const dataBuffer = fs.readFileSync(tempPath);
+          const pdfData = await (pdfParse as any)(dataBuffer);
+          const pdfText = pdfData.text;
+          
+          if (pdfText && pdfText.length > 50) {
+            console.log("Telegram Bot: Using callLLM Text Parser...");
+            jsonResponse = await callLLM(generatePrompt(), pdfText.substring(0, 30000));
+            parsedWithText = true;
           }
-        });
-        
-        const prompt = generatePrompt();
+        } catch (err) {
+          console.log("Telegram Bot: Local PDF text extraction failed or returned no text, falling back to Multimodal...", err);
+        }
 
-        const chatResult = await ai.models.generateContent({
-           model: 'gemini-2.5-flash',
-           contents: [
-             {
-               role: 'user',
-               parts: [
-                 { fileData: { fileUri: uploadResponse.uri, mimeType: uploadResponse.mimeType } },
-                 { text: prompt }
-               ]
-             }
-           ],
-           config: {
-             responseMimeType: 'application/json',
-           }
-        });
-        
-        let jsonResponse = chatResult.text;
+        // 2. Multimodal Fallback using Gemini File API if local extraction failed and Gemini key is available
+        if (!parsedWithText) {
+          if (process.env.GEMINI_API_KEY) {
+            console.log("Telegram Bot: Using Multimodal Gemini Files API...");
+            const uploadResponse = await ai.files.upload({
+              file: tempPath,
+              config: {
+                mimeType: "application/pdf"
+              }
+            });
+            
+            const prompt = generatePrompt();
+            const chatResult = await ai.models.generateContent({
+               model: 'gemini-2.5-flash',
+               contents: [
+                 {
+                   role: 'user',
+                   parts: [
+                     { fileData: { fileUri: uploadResponse.uri, mimeType: uploadResponse.mimeType } },
+                     { text: prompt }
+                   ]
+                 }
+               ],
+               config: {
+                 responseMimeType: 'application/json',
+               }
+            });
+            jsonResponse = chatResult.text || "";
+          } else {
+            throw new Error("Local text extraction failed and no GEMINI_API_KEY configured for multimodal fallback.");
+          }
+        }
         if (jsonResponse) {
           // Strip markdown backticks if present
           jsonResponse = jsonResponse.replace(/```json\n?/g, '').replace(/```/g, '').trim();

@@ -1,0 +1,8 @@
+# Tambahkan ini ke dalam tools di hermes_config.yaml server Armbian Anda
+tools:
+  - name: "rab_analyzer"
+    type: "python"
+    script: "/root/.hermes/scripts/rab_analyzer.py"
+    description: "Analisis cerdas tabel RAB PDF menggunakan model hibrida CENAI (Deterministic + LLM Fallback)"
+    input:
+      file_path: "string"

@@ -3,11 +3,12 @@ export async function findOrCreateFolder(
   folderName: string,
   parentId?: string
 ): Promise<string> {
-  const query = `name = '${folderName.replace(/'/g, "\\'")}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false${
+  // Ambil semua folder aktif di dalam parent untuk pembandingan case-insensitive secara menyeluruh
+  const query = `mimeType = 'application/vnd.google-apps.folder' and trashed = false${
     parentId ? ` and '${parentId}' in parents` : ''
   }`;
   
-  const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id)`;
+  const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)&pageSize=100`;
   
   const response = await fetch(searchUrl, {
     headers: {
@@ -21,8 +22,15 @@ export async function findOrCreateFolder(
   }
   
   const searchResult = await response.json();
-  if (searchResult.files && searchResult.files.length > 0) {
-    return searchResult.files[0].id;
+  const files = searchResult.files || [];
+  
+  // Pembandingan case-insensitive di sisi klien demi menghindari duplikasi folder
+  const existingFolder = files.find(
+    (file: any) => file.name.toLowerCase().trim() === folderName.toLowerCase().trim()
+  );
+  
+  if (existingFolder) {
+    return existingFolder.id;
   }
   
   // Folder tidak ditemukan, mari kita buat

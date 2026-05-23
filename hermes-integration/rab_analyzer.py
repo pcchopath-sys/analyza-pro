@@ -4,6 +4,28 @@ import time
 import requests
 import json
 
+import subprocess
+import socket
+
+def get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "192.168.1.11"
+
+def get_tailscale_ip():
+    try:
+        output = subprocess.check_output(["tailscale", "ip", "-4"], stderr=subprocess.DEVNULL).decode().strip()
+        if output:
+            return output
+    except Exception:
+        pass
+    return None
+
 SERVER_URL = "http://localhost:4000"
 
 def analyze_rab(file_path):
@@ -58,11 +80,17 @@ def analyze_rab(file_path):
         if not result_data.get('success'):
             return {'status': 'error', 'message': result_data.get('message', 'Failed to retrieve result data')}
             
-        app_url = os.environ.get("APP_URL", "http://100.78.157.19:4000").rstrip('/')
+        local_ip = get_local_ip()
+        tailscale_ip = get_tailscale_ip()
+        
+        local_url = f"http://{local_ip}:4000?id={result_id}"
+        tailscale_url = f"http://{tailscale_ip}:4000?id={result_id}" if tailscale_ip else None
+        
         return {
             'status': 'success',
             'result_id': result_id,
-            'url': f"{app_url}?id={result_id}",
+            'local_url': local_url,
+            'tailscale_url': tailscale_url,
             'data': result_data['data']
         }
         

@@ -494,9 +494,12 @@ JSON Schema:
   });
 
   // Telegram bot setup
-  if (process.env.TELEGRAM_BOT_TOKEN) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const isTokenValid = token && /^\d+:[a-zA-Z0-9_-]{35,}$/.test(token);
+
+  if (isTokenValid) {
     console.log("Starting Telegram Bot...");
-    const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
+    const bot = new Telegraf(token!);
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     
     bot.start((ctx) => ctx.reply('Halo! Kirimkan file PDF RAB ke sini, dan saya akan menganalisanya menggunakan Gemini AI.'));
@@ -593,13 +596,15 @@ JSON Schema:
       }
     });
 
-    bot.launch();
+    bot.launch().catch((err) => {
+      console.error("❌ Gagal meluncurkan Telegram Bot (Token mungkin salah atau duplikat):", err.message);
+    });
     
     // Enable graceful stop
     process.once('SIGINT', () => bot.stop('SIGINT'));
     process.once('SIGTERM', () => bot.stop('SIGTERM'));
   } else {
-    console.warn("TELEGRAM_BOT_TOKEN is not set. Telegram bot will not start.");
+    console.warn("TELEGRAM_BOT_TOKEN is not set atau tidak valid. Telegram bot tidak dijalankan.");
   }
 
   app.use((err: any, req: any, res: any, next: any) => {

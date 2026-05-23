@@ -234,6 +234,7 @@ Berikut adalah kriteria ekstraksi:
 9. "audit": Berikan minimal 5 finding dari hasil audit / review sederhana (array berisi objek text dan tipe). Type "info" (biru), "warn" (kuning), atau kosongi (hijau/OK).
 10. Jangan berikan balasan markdown lain selain raw JSON saja!.
 11. PENTING: Seluruh teks hasil ekstraksi, nama komponen pekerjaan, rincian detail breakdown sub-pekerjaan, serta poin-poin analisis temuan audit WAJIB ditulis dalam BAHASA INDONESIA yang baku, formal, dan profesional (SAMA SEKALI JANGAN menggunakan Bahasa Inggris)!
+12. DETEKSI BIAYA PENGELOLAAN: Periksa secara ketat jika terdapat "Biaya Pengelolaan" atau "Biaya Administrasi/Operasional/Bintek" dalam dokumen RAB. Jika ada, Anda WAJIB memberikan rincian nominal dan persentasenya terhadap total anggaran di dalam daftar temuan "audit". Berikan catatan peringatan ("warn") jika nilainya tidak diperinci secara transparan menjadi sub-pekerjaan yang jelas (seperti perjalanan dinas, ATK, pelaporan) ATAU jika nilainya melebihi batas wajar (misalnya > 5% dari total RAB), dan berikan catatan "info" jika nilainya nihil atau wajar. Ini demi menjamin transparansi anggaran proyek!
 
 JSON Schema:
 {

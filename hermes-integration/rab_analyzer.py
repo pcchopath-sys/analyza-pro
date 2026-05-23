@@ -86,6 +86,22 @@ def analyze_rab(file_path):
         local_url = f"http://{local_ip}:4000?id={result_id}"
         tailscale_url = f"http://{tailscale_ip}:4000?id={result_id}" if tailscale_ip else None
         
+        # Tambahkan peringatan bila ada biaya pengelolaan / manajemen / administrasi yang tidak transparan
+        audit_warnings = []
+        transparent_keys = ['biayaPengelolaan', 'biayaManajemen', 'biayaAdministrasi']
+        for key in transparent_keys:
+            val = result_data['data'].get(key)
+            if val and isinstance(val, str) and val.strip() and not val.lower().startswith('0'):
+                audit_warnings.append({
+                    'text': f'Biaya {key} terdeteksi ({val}) namun tidak tercantum dalam rincian anggaran utama. Periksa transparansi.',
+                    'type': 'warn'
+                })
+        # Gabungkan dengan audit yang sudah ada jika ada
+        if isinstance(result_data['data'].get('audit'), list):
+            result_data['data']['audit'].extend(audit_warnings)
+        else:
+            result_data['data']['audit'] = audit_warnings
+
         return {
             'status': 'success',
             'result_id': result_id,

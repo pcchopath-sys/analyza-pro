@@ -316,7 +316,7 @@ export default function App() {
               {syncStatus === "error" && "Gagal Menyimpan ke Google Drive"}
             </h2>
             <p className="text-sm text-slate-500 font-mono mt-2 max-w-md">
-              {!syncStatus && "Mengekstrak tabel tak terstruktur & memetakan nilai (CENAI)..."}
+              {!syncStatus && "Mengekstrak tabel tak terstruktur & memetakan nilai (CANEI)..."}
               {syncStatus === "connecting" && "Membuka otorisasi token penyimpanan cloud..."}
               {syncStatus === "checking_pengawasan" && "Memeriksa keberadaan folder induk '/Pengawasan'..."}
               {syncStatus === "checking_school" && "Mencari atau membuat subfolder khusus sekolah..."}

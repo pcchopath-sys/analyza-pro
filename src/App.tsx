@@ -165,7 +165,7 @@ export default function App() {
                   setSyncStatus("connecting");
                   try {
                     setSyncStatus("checking_pengawasan");
-                    const parentFolderId = await findOrCreateFolder(accessToken, "Pengawasan");
+                    const parentFolderId = "1QP4ZQ9PdnpHiPY4208yhE7XPRUfiFkVL";
                     
                     setSyncStatus("checking_school");
                     const schoolFolderId = await findOrCreateFolder(accessToken, schoolName, parentFolderId);

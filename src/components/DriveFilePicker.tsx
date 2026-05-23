@@ -27,47 +27,29 @@ export function DriveFilePicker({ accessToken, onFileSelect, onClose }: DriveFil
     setLoading(true);
     setError(null);
     try {
-      // 1. Cari folder "Pengawasan" untuk mendapatkan ID-nya
-      const folderQuery = "name = 'Pengawasan' and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
-      const folderRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(folderQuery)}&fields=files(id)`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (!folderRes.ok) {
-        throw new Error('Gagal mencari folder "Pengawasan" di Google Drive.');
-      }
-      const folderData = await folderRes.json();
-      const folders = folderData.files || [];
+      const pengawasanId = "1QP4ZQ9PdnpHiPY4208yhE7XPRUfiFkVL";
+      const parentIds = [pengawasanId];
       
       let q = "mimeType='application/pdf' and trashed = false";
       
-      if (folders.length > 0) {
-        const pengawasanId = folders[0].id;
-        const parentIds = [pengawasanId];
-        
-        // 2. Cari subfolder (folder sekolah) di dalam "Pengawasan"
-        try {
-          const subfolderQuery = `'${pengawasanId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-          const subfolderRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(subfolderQuery)}&fields=files(id)&pageSize=100`, {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          });
-          if (subfolderRes.ok) {
-            const subfolderData = await subfolderRes.json();
-            const subfolders = subfolderData.files || [];
-            subfolders.forEach((sub: any) => parentIds.push(sub.id));
-          }
-        } catch (subfolderErr) {
-          console.warn("Gagal mengambil subfolder, hanya memindai folder utama Pengawasan:", subfolderErr);
+      // 2. Cari subfolder (folder sekolah) di dalam "Pengawasan"
+      try {
+        const subfolderQuery = `'${pengawasanId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        const subfolderRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(subfolderQuery)}&fields=files(id)&pageSize=100`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (subfolderRes.ok) {
+          const subfolderData = await subfolderRes.json();
+          const subfolders = subfolderData.files || [];
+          subfolders.forEach((sub: any) => parentIds.push(sub.id));
         }
-        
-        // Batasi pencarian hanya di folder Pengawasan atau subfoldernya
-        const parentConditions = parentIds.map(id => `'${id}' in parents`).join(" or ");
-        q += ` and (${parentConditions})`;
-      } else {
-        // Jika folder Pengawasan tidak ada, tampilkan kosong untuk menjaga privasi
-        setFiles([]);
-        setLoading(false);
-        return;
+      } catch (subfolderErr) {
+        console.warn("Gagal mengambil subfolder, hanya memindai folder utama Pengawasan:", subfolderErr);
       }
+      
+      // Batasi pencarian hanya di folder Pengawasan atau subfoldernya
+      const parentConditions = parentIds.map(id => `'${id}' in parents`).join(" or ");
+      q += ` and (${parentConditions})`;
 
       if (query) {
         q += ` and name contains '${query.replace(/'/g, "\\'")}'`;

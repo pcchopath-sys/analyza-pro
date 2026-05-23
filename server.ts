@@ -233,6 +233,7 @@ Berikut adalah kriteria ekstraksi:
 8. "top4": 4 komponen biaya / pekerjaan dengan persentase tertinggi dan rinciannya. (Berikan nama komponen, nilai nominal, persentase, dan color Tailwind acak e.g. "bg-blue-600" dsb). Tiap item harus memiliki list "breakdown" maksimal 5 turunan pekerjaan. Urutkan turunan pekerjaan dari nilai terbesar ke terkecil, sehingga item kelima "Lain-lain" menjadi sisa yang paling kecil secara rasional.
 9. "audit": Berikan minimal 5 finding dari hasil audit / review sederhana (array berisi objek text dan tipe). Type "info" (biru), "warn" (kuning), atau kosongi (hijau/OK).
 10. Jangan berikan balasan markdown lain selain raw JSON saja!.
+11. PENTING: Seluruh teks hasil ekstraksi, nama komponen pekerjaan, rincian detail breakdown sub-pekerjaan, serta poin-poin analisis temuan audit WAJIB ditulis dalam BAHASA INDONESIA yang baku, formal, dan profesional (SAMA SEKALI JANGAN menggunakan Bahasa Inggris)!
 
 JSON Schema:
 {

@@ -58,8 +58,11 @@ def analyze_rab(file_path):
         if not result_data.get('success'):
             return {'status': 'error', 'message': result_data.get('message', 'Failed to retrieve result data')}
             
+        app_url = os.environ.get("APP_URL", "http://100.78.157.19:4000").rstrip('/')
         return {
             'status': 'success',
+            'result_id': result_id,
+            'url': f"{app_url}?id={result_id}",
             'data': result_data['data']
         }
         

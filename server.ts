@@ -109,6 +109,29 @@ function runDeterministicAudit(data: any): any[] {
   return extraAudits;
 }
 
+function parseExcelTextToSheets(text: string): Record<string, string> {
+  const sheets: Record<string, string> = {};
+  const regex = /===\s*Sheet:\s*(.*?)\s*===/g;
+  let match;
+  const positions: { name: string, index: number }[] = [];
+  
+  while ((match = regex.exec(text)) !== null) {
+    positions.push({ name: match[1].trim(), index: match.index + match[0].length });
+  }
+  
+  for (let i = 0; i < positions.length; i++) {
+    const start = positions[i].index;
+    const end = (i + 1 < positions.length) ? text.indexOf("===", positions[i + 1].index - 50) : text.length;
+    let sheetText = text.substring(start, end > start ? end : text.length).trim();
+    
+    // Batasi baris agar tidak terlalu besar di memory
+    const lines = sheetText.split("\n").slice(0, 100);
+    sheets[positions[i].name] = lines.join("\n");
+  }
+  
+  return sheets;
+}
+
 async function startServer() {
   const app = express();
   
@@ -495,6 +518,7 @@ JSON Schema:
               parsed = JSON.parse(cleaned);
               parsed.isXlsx = true;
               parsed.sheets = excelSheets;
+              parsed.sheetData = parseExcelTextToSheets(fileContentText);
               parsed.audit.unshift({ text: "Sistem menerapkan OCR tabular pintar untuk memetakan sheet Excel secara terstruktur.", type: "info", page: 1 });
             }
           }
@@ -709,6 +733,7 @@ JSON Schema:
               parsed = JSON.parse(cleaned);
               parsed.isXlsx = true;
               parsed.sheets = excelSheets;
+              parsed.sheetData = parseExcelTextToSheets(fileContentText);
               parsed.audit.unshift({ text: "Sistem menerapkan OCR tabular pintar untuk memetakan sheet Excel secara terstruktur.", type: "info", page: 1 });
             }
           }
@@ -864,6 +889,31 @@ JSON Schema:
   // Jalankan pembersihan saat startup & berkala setiap 1 jam
   runStorageCleanup();
   setInterval(runStorageCleanup, 60 * 60 * 1000);
+
+  // Jalankan parsing asinkron untuk sampel kalijaten saat startup secara otonom
+  (async () => {
+    try {
+      const kalijatenPath = path.join(uploadsDir, "kalijaten.xlsx");
+      if (fs.existsSync(kalijatenPath)) {
+        console.log("[STARTUP] Parsing Excel sampel Kalijaten secara otonom...");
+        const scriptPath = os.homedir() + "/.hermes/scripts/perception_layer.py";
+        const cmd = `python3 "${scriptPath}" --file "${kalijatenPath}" --json`;
+        const { stdout } = await execPromise(cmd);
+        const parsedRes = JSON.parse(stdout.trim());
+        if (parsedRes.success && parsedRes.text) {
+          const kalData = parsedRABs.get("kalijaten");
+          if (kalData) {
+            kalData.sheets = parsedRes.sheets || [];
+            kalData.sheetData = parseExcelTextToSheets(parsedRes.text);
+            parsedRABs.set("kalijaten", kalData);
+            console.log("[STARTUP] Sukses memparsing & menyuntikkan sheetData sampel Kalijaten!");
+          }
+        }
+      }
+    } catch (startupErr) {
+      console.error("[STARTUP] Gagal memparsing sampel Kalijaten:", startupErr);
+    }
+  })();
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);

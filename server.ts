@@ -10,7 +10,10 @@ import fetch from "node-fetch";
 import fs from "fs";
 import os from "os";
 import multer from "multer";
+import { exec } from "child_process";
+import { promisify } from "util";
 
+const execPromise = promisify(exec);
 const upload = multer({ dest: os.tmpdir() });
 
 // We can just use the global fetch in Node 18+
@@ -247,7 +250,15 @@ async function startServer() {
     pembangunanBaru: "Rp 548.56 Juta",
     pembangunanBaruPct: 70,
     rehabilitasiPct: 30,
-    fileName: "RAB SDN Kalijaten.pdf",
+    fileName: "RAB SDN Kalijaten.xlsx",
+    isXlsx: true,
+    sheets: [
+      "DAFTAR  BESI IWF", "DAFTAR BESI KANAL C SIKU", "Daftar KAB", "Data Kerusakan", 
+      "Input Data", "Rekap RPD", "Rekap RAB per ruang", "KURVA S", "Harga Bahan & Upah", 
+      "Harsat Pekerjaan", "RAW", "Perhitungan Besi", "Rekap Pekerjaan", "Rekap Total", 
+      "Rekap Volume", "Analisa", "PERSIAPAN", "RKB 2 Kopel", "1 UKS BARU ", "1A Vol. UKS", 
+      "BOQ C1 (3)", "2.PERPUS BARU ", "3 TOILET BARU", "4 C1", "5 Rehab Toilet Putra"
+    ],
     tanggal: "26-Apr-26",
     top4: [
       { 
@@ -448,125 +459,161 @@ JSON Schema:
     // Background processing
     const filePath = req.file.path;
     const fileName = req.file.originalname;
+    const fileExt = path.extname(fileName).toLowerCase();
+    const isXlsx = [".xlsx", ".xls"].includes(fileExt);
+
     (async () => {
       try {
         let parsed: any = null;
-        let pdfText = "";
-        
-        // 1. Deterministic Extraction First
-        try {
-          const pdfParseModule = await import("pdf-parse");
-          const pdfParse = (pdfParseModule as any).default || pdfParseModule;
-          const dataBuffer = fs.readFileSync(filePath);
-          const pdfData = await (pdfParse as any)(dataBuffer);
-          pdfText = pdfData.text;
-          
-          if (pdfText && pdfText.length > 50) {
-            // RegEx Deterministic Parsing
-            const result: any = {
-              nama: "Tidak Diketahui",
-              kabupaten: "Tidak Diketahui",
-              totalBiaya: "Rp 0",
-              tahap1: "Rp 0",
-              tahap1Pct: "70%",
-              tahap2: "Rp 0",
-              tahap2Pct: "30%",
-              pembangunanBaru: "Rp 0",
-              pembangunanBaruPct: 0,
-              rehabilitasiPct: 0,
-              fileName: fileName,
-              tanggal: "-",
-              top4: [],
-              audit: [
-                { text: "Dokumen berhasil diekstrak melalui pemindaian teks standar (Efisiensi Tinggi).", type: "info" }
-              ]
-            };
+        let fileContentText = "";
+        let excelSheets: string[] = [];
 
-            const namaMatch = pdfText.match(/Nama Sekolah\s*:\s*([^\n]+)/i);
-            if (namaMatch) result.nama = namaMatch[1].trim();
-
-            const kabMatch = pdfText.match(/Kab(?:upaten|\.\/kota)?\s*:\s*([^\n]+)/i);
-            if (kabMatch) result.kabupaten = kabMatch[1].trim();
-
-            const tglMatch = pdfText.match(/Tanggal\s+Bintek\s*:\s*([^\n]+)/i);
-            if (tglMatch) result.tanggal = tglMatch[1].trim();
-
-            // Total Biaya
-            const totalMatch = pdfText.match(/(?:TOTAL BANTUAN\s*\(Rp\.\s*\)|PEMBULATAN TOTAL)\s*([\d,.]+)/i);
-            if (totalMatch) {
-              result.totalBiaya = "Rp " + totalMatch[1].replace(/,/g, '.').trim();
+        if (isXlsx) {
+          console.log(`[PARSER] Processing Excel file: ${fileName}`);
+          try {
+            const scriptPath = os.homedir() + "/.hermes/scripts/perception_layer.py";
+            const cmd = `python3 "${scriptPath}" --file "${filePath}" --json`;
+            const { stdout } = await execPromise(cmd);
+            const parsedRes = JSON.parse(stdout.trim());
+            if (parsedRes.success && parsedRes.text) {
+              fileContentText = parsedRes.text;
+              excelSheets = parsedRes.sheets || [];
+              console.log(`[PARSER] Excel extraction succeeded. Character count: ${parsedRes.chars_extracted}`);
+            } else {
+              throw new Error(parsedRes.error || "Gagal mengekstrak konten Excel");
             }
+          } catch (excelError: any) {
+            console.error("Excel perception parsing failed:", excelError);
+            throw new Error("Gagal mengekstrak teks Excel: " + excelError.message);
+          }
 
-            // We require minimum these to count as "success"
-            if (result.nama !== "Tidak Diketahui" && totalMatch) {
-              parsed = result;
+          if (fileContentText) {
+            console.log("Using LLM for Excel JSON extraction...");
+            const jsonResponse = await callLLM(generatePrompt(), fileContentText.substring(0, 30000));
+            if (jsonResponse) {
+              const cleaned = jsonResponse.replace(/```json\n?/g, '').replace(/```/g, '').trim();
+              parsed = JSON.parse(cleaned);
+              parsed.isXlsx = true;
+              parsed.sheets = excelSheets;
+              parsed.audit.unshift({ text: "Sistem menerapkan OCR tabular pintar untuk memetakan sheet Excel secara terstruktur.", type: "info", page: 1 });
             }
           }
-        } catch (deterministicError) {
-          console.log("Deterministic Regex parsing failed or incomplete, falling back to LLM...");
-        }
-
-        // 2. LLM Text-only fallback (Cheaper than File API)
-        if (!parsed && pdfText && pdfText.length > 50) {
-          console.log("Using LLM Text Fallback...");
-          const jsonResponse = await callLLM(generatePrompt(), pdfText.substring(0, 30000));
-          if (jsonResponse) {
-            const cleaned = jsonResponse.replace(/```json\n?/g, '').replace(/```/g, '').trim();
-            parsed = JSON.parse(cleaned);
-            parsed.audit.unshift({ text: "Sistem menerapkan analisis teks semantik untuk memproses format yang tidak standar.", type: "info" });
-          }
-        }
-
-        // 3. Multimodal LLM as last resort
-        if (!parsed) {
-          console.log("Using Multimodal File API Last Resort...");
-          const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-          const uploadResponse = await ai.files.upload({
-            file: filePath,
-            config: { mimeType: "application/pdf" }
-          });
-
-          let fileStatus = uploadResponse;
-          let attempts = 0;
-          while (fileStatus.state === "PROCESSING" && attempts < 30) {
-            await new Promise(r => setTimeout(r, 2000));
-            fileStatus = await ai.files.get({ name: uploadResponse.name });
-            attempts++;
-          }
-
-          if (fileStatus.state === "FAILED") {
-            throw new Error("Gagal memproses file di server Gemini");
-          }
-
-          const chatResult = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: [
-              {
-                role: 'user',
-                parts: [
-                  { fileData: { fileUri: uploadResponse.uri, mimeType: uploadResponse.mimeType } },
-                  { text: generatePrompt() }
+        } else {
+          // Standard PDF parsing flow
+          let pdfText = "";
+          // 1. Deterministic Extraction First
+          try {
+            const pdfParseModule = await import("pdf-parse");
+            const pdfParse = (pdfParseModule as any).default || pdfParseModule;
+            const dataBuffer = fs.readFileSync(filePath);
+            const pdfData = await (pdfParse as any)(dataBuffer);
+            pdfText = pdfData.text;
+            
+            if (pdfText && pdfText.length > 50) {
+              // RegEx Deterministic Parsing
+              const result: any = {
+                nama: "Tidak Diketahui",
+                kabupaten: "Tidak Diketahui",
+                totalBiaya: "Rp 0",
+                tahap1: "Rp 0",
+                tahap1Pct: "70%",
+                tahap2: "Rp 0",
+                tahap2Pct: "30%",
+                pembangunanBaru: "Rp 0",
+                pembangunanBaruPct: 0,
+                rehabilitasiPct: 0,
+                fileName: fileName,
+                tanggal: "-",
+                top4: [],
+                audit: [
+                  { text: "Dokumen berhasil diekstrak melalui pemindaian teks standar (Efisiensi Tinggi).", type: "info", page: 1 }
                 ]
+              };
+
+              const namaMatch = pdfText.match(/Nama Sekolah\s*:\s*([^\n]+)/i);
+              if (namaMatch) result.nama = namaMatch[1].trim();
+
+              const kabMatch = pdfText.match(/Kab(?:upaten|\.\/kota)?\s*:\s*([^\n]+)/i);
+              if (kabMatch) result.kabupaten = kabMatch[1].trim();
+
+              const tglMatch = pdfText.match(/Tanggal\s+Bintek\s*:\s*([^\n]+)/i);
+              if (tglMatch) result.tanggal = tglMatch[1].trim();
+
+              const totalMatch = pdfText.match(/(?:TOTAL BANTUAN\s*\(Rp\.\s*\)|PEMBULATAN TOTAL)\s*([\d,.]+)/i);
+              if (totalMatch) {
+                result.totalBiaya = "Rp " + totalMatch[1].replace(/,/g, '.').trim();
               }
-            ],
-            config: {
-              responseMimeType: 'application/json',
+
+              if (result.nama !== "Tidak Diketahui" && totalMatch) {
+                parsed = result;
+              }
             }
-          });
-          
-          let jsonResponse = chatResult.text;
-          if (jsonResponse) {
-            jsonResponse = jsonResponse.replace(/```json\n?/g, '').replace(/```/g, '').trim();
-            parsed = JSON.parse(jsonResponse);
-            parsed.audit.unshift({ text: "Struktur kompleks terdeteksi: Sistem melakukan analisis pemindaian dokumen visual secara menyeluruh.", type: "warn" });
-          } else {
-            throw new Error("Failed to generate json from Gemini");
+          } catch (deterministicError) {
+            console.log("Deterministic Regex parsing failed or incomplete, falling back to LLM...");
+          }
+
+          // 2. LLM Text-only fallback
+          if (!parsed && pdfText && pdfText.length > 50) {
+            console.log("Using LLM Text Fallback...");
+            const jsonResponse = await callLLM(generatePrompt(), pdfText.substring(0, 30000));
+            if (jsonResponse) {
+              const cleaned = jsonResponse.replace(/```json\n?/g, '').replace(/```/g, '').trim();
+              parsed = JSON.parse(cleaned);
+              parsed.audit.unshift({ text: "Sistem menerapkan analisis teks semantik untuk memproses format yang tidak standar.", type: "info", page: 1 });
+            }
+          }
+
+          // 3. Multimodal LLM as last resort
+          if (!parsed) {
+            console.log("Using Multimodal File API Last Resort...");
+            const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+            const uploadResponse = await ai.files.upload({
+              file: filePath,
+              config: { mimeType: "application/pdf" }
+            });
+
+            let fileStatus = uploadResponse;
+            let attempts = 0;
+            while (fileStatus.state === "PROCESSING" && attempts < 30) {
+              await new Promise(r => setTimeout(r, 2000));
+              fileStatus = await ai.files.get({ name: uploadResponse.name });
+              attempts++;
+            }
+
+            if (fileStatus.state === "FAILED") {
+              throw new Error("Gagal memproses file di server Gemini");
+            }
+
+            const chatResult = await ai.models.generateContent({
+              model: 'gemini-2.5-flash',
+              contents: [
+                {
+                  role: 'user',
+                  parts: [
+                    { fileData: { fileUri: uploadResponse.uri, mimeType: uploadResponse.mimeType } },
+                    { text: generatePrompt() }
+                  ]
+                }
+              ],
+              config: {
+                responseMimeType: 'application/json',
+              }
+            });
+            
+            let jsonResponse = chatResult.text;
+            if (jsonResponse) {
+              jsonResponse = jsonResponse.replace(/```json\n?/g, '').replace(/```/g, '').trim();
+              parsed = JSON.parse(jsonResponse);
+              parsed.audit.unshift({ text: "Struktur kompleks terdeteksi: Sistem melakukan analisis pemindaian dokumen visual secara menyeluruh.", type: "warn", page: 1 });
+            } else {
+              throw new Error("Failed to generate json from Gemini");
+            }
           }
         }
-        
+
         if (parsed) {
-          // Copy PDF to uploads dir persistently
-          const destPath = path.join(uploadsDir, `${taskId}.pdf`);
+          // Copy PDF/Excel to uploads dir persistently
+          const destPath = path.join(uploadsDir, `${taskId}${fileExt}`);
           fs.copyFileSync(filePath, destPath);
           
           // Run deterministic audit validator
@@ -576,7 +623,7 @@ JSON Schema:
           parsedRABs.set(taskId, parsed);
           backgroundTasks.set(taskId, { status: "done", result: taskId });
         } else {
-          throw new Error("Gagal memparsing PDF");
+          throw new Error("Gagal memparsing berkas");
         }
       } catch (e: any) {
         console.error("Background task error:", e);
@@ -606,85 +653,129 @@ JSON Schema:
     const bot = new Telegraf(token!);
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     
-    bot.start((ctx) => ctx.reply('Halo! Kirimkan file PDF RAB ke sini, dan saya akan menganalisanya menggunakan Gemini AI.'));
+    bot.start((ctx) => ctx.reply('Halo Boss! Kirimkan file PDF atau Excel (.xlsx/.xls) RAB ke sini, biar Gemma analisa pake Gemini AI secara otomatis.'));
     
     bot.on('document', async (ctx) => {
       try {
         const file = ctx.message.document;
-        if (file.mime_type !== 'application/pdf') {
-          return ctx.reply('Mohon kirimkan file dalam format PDF.');
+        const fileName = file.file_name || "";
+        const fileExt = path.extname(fileName).toLowerCase();
+        const allowedExts = [".pdf", ".xlsx", ".xls"];
+        
+        if (!allowedExts.includes(fileExt)) {
+          return ctx.reply('⚠️ Format file tidak didukung, Boss. Kirimkan file RAB berformat PDF (.pdf) atau Excel (.xlsx/.xls) aja ya.');
         }
         
-        ctx.reply('⏳ Sedang mengunduh dan menganalisa dokumen RAB Anda. Mohon tunggu...');
+        ctx.reply('⏳ Sedang mengunduh dan menganalisa dokumen RAB Boss. Mohon tunggu...');
         
         const fileLink = await ctx.telegram.getFileLink(file.file_id);
         
         // Download file to temp
         const response = await fetch(fileLink.href);
         const buffer = await response.arrayBuffer();
-        const tempPath = path.join(os.tmpdir(), `${file.file_id}.pdf`);
+        const tempPath = path.join(os.tmpdir(), `${file.file_id}${fileExt}`);
         fs.writeFileSync(tempPath, Buffer.from(buffer));
         
         let jsonResponse = "";
-        let parsedWithText = false;
+        let parsed: any = null;
+        let fileContentText = "";
+        let excelSheets: string[] = [];
+        const isXlsx = [".xlsx", ".xls"].includes(fileExt);
         
-        // 1. Try local PDF text extraction first
-        try {
-          const pdfParseModule = await import("pdf-parse");
-          const pdfParse = (pdfParseModule as any).default || pdfParseModule;
-          const dataBuffer = fs.readFileSync(tempPath);
-          const pdfData = await (pdfParse as any)(dataBuffer);
-          const pdfText = pdfData.text;
-          
-          if (pdfText && pdfText.length > 50) {
-            console.log("Telegram Bot: Using callLLM Text Parser...");
-            jsonResponse = await callLLM(generatePrompt(), pdfText.substring(0, 30000));
-            parsedWithText = true;
+        if (isXlsx) {
+          console.log(`[TELEGRAM BOT] Processing Excel file: ${fileName}`);
+          try {
+            const scriptPath = os.homedir() + "/.hermes/scripts/perception_layer.py";
+            const cmd = `python3 "${scriptPath}" --file "${tempPath}" --json`;
+            const { stdout } = await execPromise(cmd);
+            const parsedRes = JSON.parse(stdout.trim());
+            if (parsedRes.success && parsedRes.text) {
+              fileContentText = parsedRes.text;
+              excelSheets = parsedRes.sheets || [];
+              console.log(`[TELEGRAM BOT] Excel extraction succeeded. Character count: ${parsedRes.chars_extracted}`);
+            } else {
+              throw new Error(parsedRes.error || "Gagal mengekstrak konten Excel");
+            }
+          } catch (excelError: any) {
+            console.error("Excel perception parsing failed:", excelError);
+            throw new Error("Gagal mengekstrak teks Excel: " + excelError.message);
           }
-        } catch (err) {
-          console.log("Telegram Bot: Local PDF text extraction failed or returned no text, falling back to Multimodal...", err);
+
+          if (fileContentText) {
+            console.log("Telegram Bot: Using LLM for Excel JSON extraction...");
+            jsonResponse = await callLLM(generatePrompt(), fileContentText.substring(0, 30000));
+            if (jsonResponse) {
+              const cleaned = jsonResponse.replace(/```json\n?/g, '').replace(/```/g, '').trim();
+              parsed = JSON.parse(cleaned);
+              parsed.isXlsx = true;
+              parsed.sheets = excelSheets;
+              parsed.audit.unshift({ text: "Sistem menerapkan OCR tabular pintar untuk memetakan sheet Excel secara terstruktur.", type: "info", page: 1 });
+            }
+          }
+        } else {
+          // Standard PDF parsing flow
+          let pdfText = "";
+          let parsedWithText = false;
+          try {
+            const pdfParseModule = await import("pdf-parse");
+            const pdfParse = (pdfParseModule as any).default || pdfParseModule;
+            const dataBuffer = fs.readFileSync(tempPath);
+            const pdfData = await (pdfParse as any)(dataBuffer);
+            pdfText = pdfData.text;
+            
+            if (pdfText && pdfText.length > 50) {
+              console.log("Telegram Bot: Using callLLM Text Parser...");
+              jsonResponse = await callLLM(generatePrompt(), pdfText.substring(0, 30000));
+              parsedWithText = true;
+            }
+          } catch (err) {
+            console.log("Telegram Bot: Local PDF text extraction failed or returned no text, falling back to Multimodal...", err);
+          }
+
+          // Multimodal Fallback using Gemini File API
+          if (!parsedWithText) {
+            if (process.env.GEMINI_API_KEY) {
+              console.log("Telegram Bot: Using Multimodal Gemini Files API...");
+              const uploadResponse = await ai.files.upload({
+                file: tempPath,
+                config: {
+                  mimeType: "application/pdf"
+                }
+              });
+              
+              const prompt = generatePrompt();
+              const chatResult = await ai.models.generateContent({
+                 model: 'gemini-2.5-flash',
+                 contents: [
+                   {
+                     role: 'user',
+                     parts: [
+                       { fileData: { fileUri: uploadResponse.uri, mimeType: uploadResponse.mimeType } },
+                       { text: prompt }
+                     ]
+                   }
+                 ],
+                 config: {
+                   responseMimeType: 'application/json',
+                 }
+              });
+              jsonResponse = chatResult.text || "";
+            } else {
+              throw new Error("Local text extraction failed and no GEMINI_API_KEY configured for multimodal fallback.");
+            }
+          }
+          
+          if (jsonResponse) {
+            jsonResponse = jsonResponse.replace(/```json\n?/g, '').replace(/```/g, '').trim();
+            parsed = JSON.parse(jsonResponse);
+          }
         }
 
-        // 2. Multimodal Fallback using Gemini File API if local extraction failed and Gemini key is available
-        if (!parsedWithText) {
-          if (process.env.GEMINI_API_KEY) {
-            console.log("Telegram Bot: Using Multimodal Gemini Files API...");
-            const uploadResponse = await ai.files.upload({
-              file: tempPath,
-              config: {
-                mimeType: "application/pdf"
-              }
-            });
-            
-            const prompt = generatePrompt();
-            const chatResult = await ai.models.generateContent({
-               model: 'gemini-2.5-flash',
-               contents: [
-                 {
-                   role: 'user',
-                   parts: [
-                     { fileData: { fileUri: uploadResponse.uri, mimeType: uploadResponse.mimeType } },
-                     { text: prompt }
-                   ]
-                 }
-               ],
-               config: {
-                 responseMimeType: 'application/json',
-               }
-            });
-            jsonResponse = chatResult.text || "";
-          } else {
-            throw new Error("Local text extraction failed and no GEMINI_API_KEY configured for multimodal fallback.");
-          }
-        }
-        if (jsonResponse) {
-          // Strip markdown backticks if present
-          jsonResponse = jsonResponse.replace(/```json\n?/g, '').replace(/```/g, '').trim();
-          const parsed = JSON.parse(jsonResponse);
+        if (parsed) {
           const id = file.file_id;
           
-          // Save PDF persistently in uploads
-          const destPath = path.join(uploadsDir, `${id}.pdf`);
+          // Save PDF/Excel persistently in uploads with correct extension
+          const destPath = path.join(uploadsDir, `${id}${fileExt}`);
           fs.copyFileSync(tempPath, destPath);
           
           // Run deterministic audit validator
@@ -696,16 +787,18 @@ JSON Schema:
           const appUrl = process.env.APP_URL || `http://${os.hostname()}:3000`;
           const resultUrl = `${appUrl}?id=${id}`;
           
-          await ctx.reply(`✅ Analisa RAB selesai!\n\n📄 Proyek: ${parsed.nama}\n💰 Total: ${parsed.totalBiaya}\n\nLihat laporan detail: ${resultUrl}`);
+          await ctx.reply(`✅ Analisa RAB selesai, Boss!\n\n📄 Proyek: ${parsed.nama}\n💰 Total: ${parsed.totalBiaya}\n\nLihat laporan detail terpadu: ${resultUrl}`);
         } else {
-           await ctx.reply('❌ Gagal menghasilkan struktur JSON dari dokumen.');
+          await ctx.reply('❌ Gagal menghasilkan struktur JSON dari dokumen RAB, Boss.');
         }
 
         // Clean up
-        fs.unlinkSync(tempPath);
+        if (fs.existsSync(tempPath)) {
+          fs.unlinkSync(tempPath);
+        }
       } catch (e: any) {
         console.error(e);
-        ctx.reply(`❌ Terjadi kesalahan: ${e.message}`);
+        ctx.reply(`❌ Ada yang error pas analisis RAB, Boss: ${e.message}`);
       }
     });
 

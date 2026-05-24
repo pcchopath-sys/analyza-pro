@@ -42,14 +42,16 @@ export default function App() {
       
       if (result.success) {
         setData(result.data);
-        setPdfUrl(`/uploads/${id}.pdf`);
+        const fileExt = result.data.fileName ? result.data.fileName.substring(result.data.fileName.lastIndexOf('.')).toLowerCase() : '.pdf';
+        setPdfUrl(`/uploads/${id}${fileExt}`);
         setActivePage(1);
       } else if (id !== 'default') {
         const fallback = await fetch(`/api/rab/default`);
         const fallbackResult = await fallback.json();
         if (fallbackResult.success) {
           setData(fallbackResult.data);
-          setPdfUrl(`/uploads/default.pdf`);
+          const fileExt = fallbackResult.data.fileName ? fallbackResult.data.fileName.substring(fallbackResult.data.fileName.lastIndexOf('.')).toLowerCase() : '.pdf';
+          setPdfUrl(`/uploads/default${fileExt}`);
           setActivePage(1);
         }
       }
@@ -59,6 +61,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    document.title = "RAB Analyzer";
     const urlParams = new URLSearchParams(window.location.search);
     const id = urlParams.get('id') || 'default';
     
@@ -120,8 +123,10 @@ export default function App() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
-      if (file.type !== 'application/pdf') {
-        alert("Mohon unggah file format PDF.");
+      const fileExt = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+      const allowedExts = ['.pdf', '.xlsx', '.xls'];
+      if (!allowedExts.includes(fileExt)) {
+        alert("Mohon unggah file format PDF atau Excel (.xlsx/.xls).");
         return;
       }
 
@@ -260,7 +265,7 @@ export default function App() {
           >
             <option value="default">Sample: SDN Trosobo I (Normal)</option>
             <option value="geluran">Sample: SDN Geluran 1 (Anomaly)</option>
-            <option value="kalijaten">Sample: SDN Kalijaten (Baru)</option>
+            <option value="kalijaten">Sample: SDN Kalijaten (Excel)</option>
           </select>
           {accessToken ? (
             <div className="hidden md:flex items-center gap-2">
@@ -282,8 +287,8 @@ export default function App() {
           
           <label className="cursor-pointer hidden md:flex items-center gap-2 text-xs font-bold bg-slate-900 text-white px-4 py-2 rounded-lg hover:bg-slate-800 transition-colors">
             <Upload size={14} />
-            Unggah RAB PDF
-            <input type="file" accept=".pdf" className="hidden" onChange={handleFileUpload} />
+            Unggah RAB
+            <input type="file" accept=".pdf,.xlsx,.xls" className="hidden" onChange={handleFileUpload} />
           </label>
           <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-300 flex items-center justify-center">
              <Activity size={14} className="text-slate-500" />
@@ -520,27 +525,85 @@ export default function App() {
           </div>
         </div>
 
-        {/* Right Column: PDF Viewer Section */}
+        {/* Right Column: Dynamic Viewer Section (PDF / Excel Audit Card) */}
         <div className="lg:col-span-5 col-span-12 bg-white rounded-2xl border border-slate-200 p-6 flex flex-col shadow-sm h-[calc(100vh-12rem)] min-h-[600px] lg:sticky lg:top-24 animate-in fade-in slide-in-from-right-4">
           <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
             <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
-              <FileText size={16} className="text-blue-600 animate-pulse" />
-              Bukti Visual PDF (Interactive)
+              {data.isXlsx ? (
+                <>
+                  <FileSpreadsheet size={16} className="text-green-600 animate-pulse" />
+                  Audit File Excel (Interactive)
+                </>
+              ) : (
+                <>
+                  <FileText size={16} className="text-blue-600 animate-pulse" />
+                  Bukti Visual PDF (Interactive)
+                </>
+              )}
             </h3>
             <span className="text-[10px] bg-blue-50 text-blue-600 border border-blue-100 px-2.5 py-1 rounded-full font-mono font-bold">
-              Halaman {activePage}
+              {data.isXlsx ? `${data.sheets?.length || 0} Sheets` : `Halaman ${activePage}`}
             </span>
           </div>
-          <div className="flex-1 bg-slate-100 rounded-xl overflow-hidden border border-slate-200/60 relative">
-            {pdfUrl ? (
+          
+          <div className="flex-1 rounded-xl overflow-hidden relative flex flex-col">
+            {data.isXlsx ? (
+              <div className="flex-1 bg-slate-900 text-white rounded-xl p-6 border border-slate-800 flex flex-col justify-between overflow-y-auto relative shadow-inner">
+                {/* Background glowing gradient */}
+                <div className="absolute top-0 right-0 w-64 h-64 bg-green-500/10 rounded-full blur-3xl pointer-events-none"></div>
+                <div className="relative z-10 flex flex-col h-full justify-between gap-6">
+                  <div>
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-12 h-12 bg-green-500/20 text-green-400 rounded-xl flex items-center justify-center border border-green-500/30 shadow-lg shadow-green-500/10">
+                        <FileSpreadsheet size={24} />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-white tracking-wide">Excel Audit Panel</h4>
+                        <p className="text-[10px] text-slate-400 font-mono">Ekstraksi Struktur Tabular</p>
+                      </div>
+                    </div>
+                    
+                    <p className="text-xs text-slate-300 leading-relaxed mb-5">
+                      Dokumen ini terdeteksi sebagai lembar kerja Excel (Spreadsheet). Sistem telah memproses seluruh sheet secara komprehensif menggunakan mesin parser siber.
+                    </p>
+
+                    <div className="border-t border-slate-800/80 pt-4">
+                      <h5 className="text-[10px] font-mono uppercase font-bold text-slate-400 tracking-wider mb-3">Daftar Sheet Terdeteksi ({data.sheets?.length || 0})</h5>
+                      <div className="flex flex-wrap gap-2 max-h-[250px] overflow-y-auto pr-1">
+                        {data.sheets && data.sheets.map((sheet: string, sIdx: number) => (
+                          <span key={sIdx} className="text-[10px] bg-slate-850 hover:bg-slate-800 border border-slate-800 text-slate-350 px-2.5 py-1 rounded-lg font-mono font-medium transition-all hover:scale-105 cursor-default shadow-sm select-none">
+                            📊 {sheet}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-800/80 pt-4 flex flex-col gap-3">
+                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
+                      <span>Format: Microsoft Excel (.xlsx/.xls)</span>
+                      <span>Status: Terverifikasi</span>
+                    </div>
+                    <a 
+                      href={pdfUrl || '#'} 
+                      download={data.fileName}
+                      className="w-full flex items-center justify-center gap-2.5 bg-green-600 hover:bg-green-500 active:bg-green-700 py-3.5 rounded-xl text-xs font-bold text-white transition-all shadow-lg shadow-green-600/25 hover:shadow-green-600/35 cursor-pointer transform hover:-translate-y-0.5 active:translate-y-0"
+                    >
+                      <Download size={16} />
+                      Unduh Berkas Excel Asli
+                    </a>
+                  </div>
+                </div>
+              </div>
+            ) : pdfUrl ? (
               <iframe
                 src={`${pdfUrl}#page=${activePage}`}
-                className="w-full h-full border-none"
+                className="w-full h-full border-none bg-slate-100 border border-slate-200/60 rounded-xl"
                 title="PDF Viewer"
                 key={`${pdfUrl}-${activePage}`}
               />
             ) : (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 p-6 text-center">
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 p-6 text-center bg-slate-100 border border-slate-200/60 rounded-xl">
                 <FileText size={48} className="stroke-1 mb-2 animate-pulse text-blue-500/50" />
                 <p className="text-xs font-medium">Belum ada file PDF yang dimuat.</p>
               </div>

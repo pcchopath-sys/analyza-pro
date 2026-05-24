@@ -19,8 +19,101 @@ const upload = multer({ dest: os.tmpdir() });
 const PORT = 4000;
 const parsedRABs = new Map<string, any>();
 
+// Deterministic Mathematical Validator (Audit Guard)
+function runDeterministicAudit(data: any): any[] {
+  const extraAudits: any[] = [];
+  try {
+    const parseRupiah = (val: string): number => {
+      if (!val) return 0;
+      const clean = val.replace(/[^\d]/g, "");
+      return parseInt(clean, 10) || 0;
+    };
+
+    const parseJutaOrRupiah = (val: string): number => {
+      if (!val) return 0;
+      if (val.toLowerCase().includes("juta")) {
+        const clean = val.replace(/[^\d.,]/g, "").replace(",", ".");
+        return Math.round(parseFloat(clean) * 1000000);
+      }
+      return parseRupiah(val);
+    };
+
+    const totalBiaya = parseRupiah(data.totalBiaya);
+    const t1 = parseJutaOrRupiah(data.tahap1);
+    const t2 = parseJutaOrRupiah(data.tahap2);
+    const sumTahapan = t1 + t2;
+
+    if (totalBiaya > 0 && sumTahapan > 0) {
+      const diff = Math.abs(totalBiaya - sumTahapan);
+      if (diff > 1000) {
+        extraAudits.push({
+          text: `[SISTEM] Selisih Perhitungan Tahap: Jumlah Tahap I (${data.tahap1}) & Tahap II (${data.tahap2}) = Rp ${sumTahapan.toLocaleString("id-ID")} memiliki selisih Rp ${diff.toLocaleString("id-ID")} dengan Total Biaya (${data.totalBiaya}).`,
+          type: "warn",
+          page: 1
+        });
+      } else {
+        extraAudits.push({
+          text: `[SISTEM] Verifikasi Matematika: Komposisi Tahap I dan Tahap II klop secara matematis dengan total biaya.`,
+          type: "",
+          page: 1
+        });
+      }
+    }
+
+    const p1 = parseInt(data.tahap1Pct?.replace(/[^\d]/g, "") || "0", 10);
+    const p2 = parseInt(data.tahap2Pct?.replace(/[^\d]/g, "") || "0", 10);
+    if (p1 > 0 && p2 > 0 && p1 + p2 !== 100) {
+      extraAudits.push({
+        text: `[SISTEM] Selisih Persentase Tahap: Total persentase Tahap I (${data.tahap1Pct}) + Tahap II (${data.tahap2Pct}) adalah ${p1 + p2}%, bukan 100%.`,
+        type: "warn",
+        page: 1
+      });
+    }
+
+    if (Array.isArray(data.top4)) {
+      let top4Total = 0;
+      data.top4.forEach((item: any) => {
+        const itemNilai = parseRupiah(item.nilai);
+        top4Total += itemNilai;
+        
+        if (Array.isArray(item.breakdown)) {
+          let bdTotal = 0;
+          item.breakdown.forEach((bd: any) => {
+            bdTotal += parseRupiah(bd.nilai);
+          });
+          const diffBd = Math.abs(itemNilai - bdTotal);
+          if (diffBd > 1000) {
+            extraAudits.push({
+              text: `[SISTEM] Ketidakcocokan Rincian: Sub-pekerjaan ${item.nama} memiliki selisih Rp ${diffBd.toLocaleString("id-ID")} dengan total kelompok pekerjaan tersebut.`,
+              type: "warn",
+              page: 2
+            });
+          }
+        }
+      });
+
+      if (totalBiaya > 0 && top4Total > totalBiaya) {
+        extraAudits.push({
+          text: `[SISTEM] Anomali Anggaran: Total akumulasi 4 pekerjaan terbesar (Rp ${top4Total.toLocaleString("id-ID")}) melebihi total keseluruhan biaya proyek (${data.totalBiaya})!`,
+          type: "warn",
+          page: 1
+        });
+      }
+    }
+  } catch (err) {
+    console.error("Error in deterministic audit validator:", err);
+  }
+  return extraAudits;
+}
+
 async function startServer() {
   const app = express();
+  
+  const uploadsDir = path.join(__dirname, "uploads");
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir);
+  }
+  app.use("/uploads", express.static(uploadsDir));
   
   // Storage for our mocked/tested data too, so we have at least one to show if none are provided
   parsedRABs.set("default", {
@@ -79,11 +172,11 @@ async function startServer() {
       },
     ],
     audit: [
-      { text: "Dokumen dipindai: 17 halaman OCR diekstrak." },
-      { text: "Verifikasi struktural RAB selesai." },
-      { text: "Item 'Tangga Beton' mengindikasikan bangunan bertingkat.", type: "warn" },
-      { text: "Verifikasi rumus: Nilai cocok dengan total Halaman 2." },
-      { text: "4 Kategori utama terdeteksi secara otomatis.", type: "info" }
+      { text: "Dokumen dipindai: 17 halaman OCR diekstrak.", type: "info", page: 1 },
+      { text: "Verifikasi struktural RAB selesai.", type: "info", page: 1 },
+      { text: "Item 'Tangga Beton' mengindikasikan bangunan bertingkat.", type: "warn", page: 2 },
+      { text: "Verifikasi rumus: Nilai cocok dengan total Halaman 2.", type: "", page: 2 },
+      { text: "4 Kategori utama terdeteksi secara otomatis.", type: "info", page: 1 }
     ]
   });
 
@@ -135,11 +228,11 @@ async function startServer() {
       }
     ],
     audit: [
-      { text: "Berhasil memindai dan mem-parsing 15 halaman PDF.", type: "info" },
-      { text: "ANOMALI FATAL: Tahap I (Rp 597 Jt) + Tahap II (Rp 255 Jt) = Rp 852 Jt. Namun Total Bantuan tertulis Rp 831 Jt.", type: "warn" },
-      { text: "ANOMALI DATA: Rekapitulasi halaman 1 (Rp 731.092.000) != RAB halaman 2 (Rp 753.183.815).", type: "warn" },
-      { text: "Porsi Pembangunan Kelas Baru mendominasi (69%) dibanding Rehabilitasi.", type: "info" },
-      { text: "Nihil penganggaran pada kategori Biaya Pengelolaan Administrasi.", type: "warn" }
+      { text: "Berhasil memindai dan mem-parsing 15 halaman PDF.", type: "info", page: 1 },
+      { text: "ANOMALI FATAL: Tahap I (Rp 597 Jt) + Tahap II (Rp 255 Jt) = Rp 852 Jt. Namun Total Bantuan tertulis Rp 831 Jt.", type: "warn", page: 1 },
+      { text: "ANOMALI DATA: Rekapitulasi halaman 1 (Rp 731.092.000) != RAB halaman 2 (Rp 753.183.815).", type: "warn", page: 2 },
+      { text: "Porsi Pembangunan Kelas Baru mendominasi (69%) dibanding Rehabilitasi.", type: "info", page: 1 },
+      { text: "Nihil penganggaran pada kategori Biaya Pengelolaan Administrasi.", type: "warn", page: 1 }
     ]
   });
 
@@ -199,11 +292,11 @@ async function startServer() {
       }
     ],
     audit: [
-      { text: "Berhasil memindai RAB SDN KALIJATEN sebanyak 16 halaman.", type: "info" },
-      { text: "Pembangunan Baru lebih dominan (70%) dibanding Rehabilitasi.", type: "info" },
-      { text: "Item 'Beton Mutu Sedang Secara Manual' nilainya 0 pada RAB.", type: "warn" },
-      { text: "Nilai di rekapitulasi (785.678.926) klop dengan total di uraian.", type: "" },
-      { text: "Akurasi matematika pembulatan telah diverifikasi.", type: "" }
+      { text: "Berhasil memindai RAB SDN KALIJATEN sebanyak 16 halaman.", type: "info", page: 1 },
+      { text: "Pembangunan Baru lebih dominan (70%) dibanding Rehabilitasi.", type: "info", page: 1 },
+      { text: "Item 'Beton Mutu Sedang Secara Manual' nilainya 0 pada RAB.", type: "warn", page: 3 },
+      { text: "Nilai di rekapitulasi (785.678.926) klop dengan total di uraian.", type: "", page: 1 },
+      { text: "Akurasi matematika pembulatan telah diverifikasi.", type: "info", page: 1 }
     ]
   });
 
@@ -231,10 +324,11 @@ Berikut adalah kriteria ekstraksi:
 6. "fileName": Gunakan nama file yang tertera di dokumen atau buat berdasarkan nama proyek.
 7. "tanggal": Tanggal dokumen / pembuatan dokumen.
 8. "top4": 4 komponen biaya / pekerjaan dengan persentase tertinggi dan rinciannya. (Berikan nama komponen, nilai nominal, persentase, dan color Tailwind acak e.g. "bg-blue-600" dsb). Tiap item harus memiliki list "breakdown" maksimal 5 turunan pekerjaan. Urutkan turunan pekerjaan dari nilai terbesar ke terkecil, sehingga item kelima "Lain-lain" menjadi sisa yang paling kecil secara rasional.
-9. "audit": Berikan minimal 5 finding dari hasil audit / review sederhana (array berisi objek text dan tipe). Type "info" (biru), "warn" (kuning), atau kosongi (hijau/OK).
+9. "audit": Berikan minimal 5 finding dari hasil audit / review sederhana (array berisi objek text, tipe, dan page). Type "info" (biru), "warn" (kuning), atau kosongi (hijau/OK). Sifat "page" adalah integer (misal: 1, 2, dll.) yang menunjukkan di halaman mana temuan ini dideteksi dalam PDF.
 10. Jangan berikan balasan markdown lain selain raw JSON saja!.
 11. PENTING: Seluruh teks hasil ekstraksi, nama komponen pekerjaan, rincian detail breakdown sub-pekerjaan, serta poin-poin analisis temuan audit WAJIB ditulis dalam BAHASA INDONESIA yang baku, formal, dan profesional (SAMA SEKALI JANGAN menggunakan Bahasa Inggris)!
 12. DETEKSI BIAYA PENGELOLAAN: Periksa secara ketat jika terdapat "Biaya Pengelolaan" atau "Biaya Administrasi/Operasional/Bintek" dalam dokumen RAB. Jika ada, Anda WAJIB memberikan rincian nominal dan persentasenya terhadap total anggaran di dalam daftar temuan "audit". Berikan catatan peringatan ("warn") jika nilainya tidak diperinci secara transparan menjadi sub-pekerjaan yang jelas (seperti perjalanan dinas, ATK, pelaporan) ATAU jika nilainya melebihi batas wajar (misalnya > 5% dari total RAB), dan berikan catatan "info" jika nilainya nihil atau wajar. Ini demi menjamin transparansi anggaran proyek!
+13. KONSISTENSI DATA & ANGKA MUTLAK: Seluruh data nominal (Rupiah) dan persentase yang Anda sebutkan di dalam daftar temuan "audit" WAJIB 100% konsisten, sinkron, dan klop dengan angka yang Anda tulis di "totalBiaya", "tahap1", "tahap2", dan "top4". JANGAN PERNAH menyebutkan angka nominal yang berbeda, bertentangan, atau membulatkannya secara tidak konsisten antara tabel hasil ekstraksi dengan narasi kesimpulan audit Anda!
 
 JSON Schema:
 {
@@ -263,7 +357,7 @@ JSON Schema:
     }
   ],
   "audit": [
-    { "text": "Auditing text finding", "type": "warn" }
+    { "text": "Auditing text finding", "type": "warn", "page": 2 }
   ]
 }`;
   async function callLLM(prompt: string, textContext?: string): Promise<string> {
@@ -471,6 +565,14 @@ JSON Schema:
         }
         
         if (parsed) {
+          // Copy PDF to uploads dir persistently
+          const destPath = path.join(uploadsDir, `${taskId}.pdf`);
+          fs.copyFileSync(filePath, destPath);
+          
+          // Run deterministic audit validator
+          const extraFindings = runDeterministicAudit(parsed);
+          parsed.audit = [...extraFindings, ...parsed.audit];
+          
           parsedRABs.set(taskId, parsed);
           backgroundTasks.set(taskId, { status: "done", result: taskId });
         } else {
@@ -580,6 +682,15 @@ JSON Schema:
           jsonResponse = jsonResponse.replace(/```json\n?/g, '').replace(/```/g, '').trim();
           const parsed = JSON.parse(jsonResponse);
           const id = file.file_id;
+          
+          // Save PDF persistently in uploads
+          const destPath = path.join(uploadsDir, `${id}.pdf`);
+          fs.copyFileSync(tempPath, destPath);
+          
+          // Run deterministic audit validator
+          const extraFindings = runDeterministicAudit(parsed);
+          parsed.audit = [...extraFindings, ...parsed.audit];
+          
           parsedRABs.set(id, parsed);
           
           const appUrl = process.env.APP_URL || `http://${os.hostname()}:3000`;

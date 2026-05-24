@@ -682,6 +682,20 @@ JSON Schema:
     }
   });
 
+  app.get("/api/sync/status", (req, res) => {
+    const statusPath = "/root/.hermes/data/sync_status.json";
+    if (fs.existsSync(statusPath)) {
+      try {
+        const raw = fs.readFileSync(statusPath, "utf-8");
+        res.json({ success: true, status: JSON.parse(raw) });
+      } catch (err: any) {
+        res.status(500).json({ success: false, message: err.message });
+      }
+    } else {
+      res.json({ success: true, status: null });
+    }
+  });
+
   app.post("/api/sync/force", async (req, res) => {
     try {
       const scriptPath = "/root/.hermes/scripts/sync_office_to_boss.py";

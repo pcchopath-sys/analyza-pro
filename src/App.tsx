@@ -38,6 +38,7 @@ export default function App() {
   const [schools, setSchools] = useState<any[]>([]);
   const [syncChanges, setSyncChanges] = useState<any[]>([]);
   const [isForceSyncing, setIsForceSyncing] = useState(false);
+  const [syncStatusData, setSyncStatusData] = useState<any>(null);
 
   const loadSyncData = async () => {
     try {
@@ -57,23 +58,66 @@ export default function App() {
     } catch (e) {
       console.error(e);
     }
+
+    await loadSyncStatus();
+  };
+
+  const loadSyncStatus = async () => {
+    try {
+      const res = await fetch('/api/sync/status');
+      const d = await res.json();
+      if (d.success && d.status) {
+        setSyncStatusData(d.status);
+        if (d.status.phase === 'syncing') {
+          setIsForceSyncing(true);
+          pollSyncStatus();
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const pollSyncStatus = () => {
+    const interval = setInterval(async () => {
+      try {
+        const sRes = await fetch('/api/sync/status');
+        const sData = await sRes.json();
+        if (sData.success && sData.status) {
+          setSyncStatusData(sData.status);
+          if (sData.status.phase === 'done') {
+            clearInterval(interval);
+            setIsForceSyncing(false);
+            await loadSyncData();
+            showToast(`✅ Sync Selesai! ${sData.status.total_synced} file dicadangkan dari ${sData.status.total_scanned} dipindai.`, 'success');
+          } else if (sData.status.phase === 'error') {
+            clearInterval(interval);
+            setIsForceSyncing(false);
+            await loadSyncData();
+            showToast(`❌ Sync Gagal: ${sData.status.error || 'Terjadi kesalahan'}`, 'error');
+          }
+        }
+      } catch (e) {
+        console.error('Error polling sync status:', e);
+      }
+    }, 1000);
   };
 
   const handleForceSync = async () => {
     setIsForceSyncing(true);
+    showToast('⏳ Memulai full parallel sync semua sekolah...', 'info');
     try {
       const res = await fetch('/api/sync/force', { method: 'POST' });
       const d = await res.json();
       if (d.success) {
-        setTimeout(async () => {
-          await loadSyncData();
-          setIsForceSyncing(false);
-        }, 3000);
+        pollSyncStatus();
       } else {
         setIsForceSyncing(false);
+        showToast('❌ Gagal memicu sinkronisasi.', 'error');
       }
     } catch (e) {
       setIsForceSyncing(false);
+      showToast('❌ Koneksi gagal saat memicu sync.', 'error');
     }
   };
 
@@ -708,16 +752,45 @@ export default function App() {
                       let textColor = "text-red-400";
                       let borderColor = "border-red-950 bg-red-950/20";
                       
-                      if (pct >= 100) {
-                        statusText = "ACUAN ⭐";
-                        color = "bg-yellow-500";
-                        textColor = "text-yellow-400";
-                        borderColor = "border-yellow-950/40 bg-yellow-950/10";
-                      } else if (pct >= 60) {
-                        statusText = "IN PROGRESS 🟡";
-                        color = "bg-yellow-500";
-                        textColor = "text-yellow-400";
-                        borderColor = "border-yellow-950/40 bg-yellow-950/10";
+                      const match = syncStatusData?.schools?.find((s: any) => 
+                        s.name.toLowerCase().includes(school.name.toLowerCase()) || 
+                        school.name.toLowerCase().includes(s.name.toLowerCase())
+                      );
+
+                      if (syncStatusData && syncStatusData.phase === 'syncing' && match) {
+                        if (match.status === 'syncing') {
+                          statusText = "🔵 SYNCING...";
+                          color = "bg-blue-500 animate-pulse";
+                          textColor = "text-blue-400 font-bold";
+                          borderColor = "border-blue-950 bg-blue-950/20 animate-pulse";
+                        } else if (match.status === 'done') {
+                          statusText = "🟢 SYNCED";
+                          color = "bg-green-500";
+                          textColor = "text-green-400";
+                          borderColor = "border-green-950/40 bg-green-950/10";
+                        } else if (match.status === 'pending') {
+                          statusText = "⏳ PENDING";
+                          color = "bg-slate-500";
+                          textColor = "text-slate-400";
+                          borderColor = "border-slate-800 bg-slate-900/30";
+                        } else if (match.status === 'error') {
+                          statusText = "🔴 ERROR";
+                          color = "bg-red-500";
+                          textColor = "text-red-400";
+                          borderColor = "border-red-950 bg-red-950/20";
+                        }
+                      } else {
+                        if (pct >= 100) {
+                          statusText = "ACUAN ⭐";
+                          color = "bg-yellow-500";
+                          textColor = "text-yellow-400";
+                          borderColor = "border-yellow-950/40 bg-yellow-950/10";
+                        } else if (pct >= 60) {
+                          statusText = "IN PROGRESS 🟡";
+                          color = "bg-yellow-500";
+                          textColor = "text-yellow-400";
+                          borderColor = "border-yellow-950/40 bg-yellow-950/10";
+                        }
                       }
 
                       return (
@@ -726,12 +799,18 @@ export default function App() {
                             <span className="line-clamp-1">{school.name}</span>
                             <span className={`text-[9px] font-mono ${textColor}`}>{statusText}</span>
                           </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-[10px] font-mono font-bold text-slate-400 w-8">{pct}%</span>
-                            <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
-                              <div className={`h-full ${color}`} style={{ width: `${pct}%` }}></div>
+                          {syncStatusData && syncStatusData.phase === 'syncing' && match ? (
+                            <div className="text-[10px] font-mono text-slate-400 font-semibold">
+                              {match.detail || "Menunggu..."}
                             </div>
-                          </div>
+                          ) : (
+                            <div className="flex items-center gap-3">
+                              <span className="text-[10px] font-mono font-bold text-slate-400 w-8">{pct}%</span>
+                              <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
+                                <div className={`h-full ${color}`} style={{ width: `${pct}%` }}></div>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })

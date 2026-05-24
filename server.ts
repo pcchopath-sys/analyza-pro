@@ -740,6 +740,38 @@ JSON Schema:
     });
   }
 
+  // Self-Cleaning Storage Guard (Capped at 12 hours)
+  function runStorageCleanup() {
+    try {
+      if (!fs.existsSync(uploadsDir)) return;
+      const files = fs.readdirSync(uploadsDir);
+      const now = Date.now();
+      const maxAge = 12 * 60 * 60 * 1000; // 12 jam toleransi dalam milidetik
+
+      files.forEach(file => {
+        // JANGAN hapus sampel default visualizer
+        if (["default.pdf", "geluran.pdf", "kalijaten.pdf"].includes(file)) {
+          return;
+        }
+
+        const filePath = path.join(uploadsDir, file);
+        const stats = fs.statSync(filePath);
+        const age = now - stats.mtimeMs;
+
+        if (stats.isFile() && age > maxAge) {
+          fs.unlinkSync(filePath);
+          console.log(`[STORAGE GUARD] Deleted old cached PDF: ${file} (Age: ${Math.round(age / 3600000)}h)`);
+        }
+      });
+    } catch (err) {
+      console.error("Storage Guard error:", err);
+    }
+  }
+
+  // Jalankan pembersihan saat startup & berkala setiap 1 jam
+  runStorageCleanup();
+  setInterval(runStorageCleanup, 60 * 60 * 1000);
+
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);
   });

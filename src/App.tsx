@@ -34,6 +34,49 @@ export default function App() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
+  // Sync and Audit states
+  const [schools, setSchools] = useState<any[]>([]);
+  const [syncChanges, setSyncChanges] = useState<any[]>([]);
+  const [isForceSyncing, setIsForceSyncing] = useState(false);
+
+  const loadSyncData = async () => {
+    try {
+      const res = await fetch('/api/sync/changes');
+      const d = await res.json();
+      if (d.success) setSyncChanges(d.changes);
+    } catch (e) {
+      console.error(e);
+    }
+
+    try {
+      const res = await fetch('/api/schools');
+      const d = await res.json();
+      if (d.success && d.data && d.data.schools) {
+        setSchools(d.data.schools);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleForceSync = async () => {
+    setIsForceSyncing(true);
+    try {
+      const res = await fetch('/api/sync/force', { method: 'POST' });
+      const d = await res.json();
+      if (d.success) {
+        setTimeout(async () => {
+          await loadSyncData();
+          setIsForceSyncing(false);
+        }, 3000);
+      } else {
+        setIsForceSyncing(false);
+      }
+    } catch (e) {
+      setIsForceSyncing(false);
+    }
+  };
+
   const loadDataById = async (id: string) => {
     setData(null);
     setError(null);
@@ -77,6 +120,7 @@ export default function App() {
     const id = urlParams.get('id') || 'default';
     
     loadDataById(id);
+    loadSyncData();
 
     // Initialize Auth
     initAuth((user, token) => {
@@ -583,6 +627,121 @@ export default function App() {
               <button className="flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 py-3 rounded-xl text-xs font-bold text-white transition-colors shadow-sm cursor-pointer">
                 <FileText size={14} /> Ekspor JSON
               </button>
+            </div>
+          </div>
+
+          {/* Sync & Audit Monitor Card */}
+          <div className="md:col-span-2 bg-slate-900 rounded-2xl p-6 text-slate-300 shadow-xl flex flex-col relative overflow-hidden">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4 mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-green-500/20 text-green-400 flex items-center justify-center border border-green-500/30">
+                  <Activity size={16} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-100">Pemantauan & Sinkronisasi Siber Kantor</h3>
+                  <p className="text-[10px] text-slate-400 font-mono">1 Kredensial Terpadu &bull; CV Sada Jiwa (Read-Only) &bull; Pengawasan Boss (Write)</p>
+                </div>
+              </div>
+              <button
+                onClick={handleForceSync}
+                disabled={isForceSyncing}
+                className="flex items-center gap-2 text-xs font-bold bg-green-500 hover:bg-green-400 text-slate-950 px-4 py-2.5 rounded-xl transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer w-fit"
+              >
+                {isForceSyncing ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    Menyinkronkan...
+                  </>
+                ) : (
+                  <>
+                    <Cloud size={14} />
+                    Sync Drive Sekarang ⚡
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Grid for activity feed and progress list */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+              {/* Activity Feed */}
+              <div className="md:col-span-7 flex flex-col min-h-[220px]">
+                <h4 className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider mb-3">Live Activity Feed (MD5 Audit)</h4>
+                <div className="flex-1 space-y-2 max-h-[200px] overflow-y-auto pr-1 font-mono text-[10px]">
+                  {syncChanges.length > 0 ? (
+                    syncChanges.map((change, idx) => (
+                      <div key={idx} className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800/80 flex flex-col gap-1 hover:border-slate-700 transition-colors">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-green-400">{change.school}</span>
+                          <span className="text-[9px] text-slate-500">
+                            {new Date(change.timestamp).toLocaleTimeString("id-ID", { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <p className="text-slate-300 font-semibold truncate" title={change.file_name}>{change.file_name || "(Folder)"}</p>
+                        <div className="flex items-center justify-between gap-2 mt-1 border-t border-slate-900 pt-1 text-[9px] text-slate-400">
+                          <span>{change.details}</span>
+                          <span className={`px-1.5 py-0.5 rounded ${
+                            change.action === 'backup_file' ? 'bg-blue-950 text-blue-400 border border-blue-900/60' : 'bg-green-950 text-green-400 border border-green-900/60'
+                          }`}>
+                            {change.action === 'backup_file' ? 'Auto-Backup' : 'New Folder'}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full text-slate-500 py-8">
+                      <p className="text-[11px]">Belum ada aktivitas baru, Boss.</p>
+                      <p className="text-[9px] mt-1">Gemma bersiaga penuh memantau setiap 1 jam.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Progress and status list */}
+              <div className="md:col-span-5 flex flex-col border-l border-slate-800/80 pl-0 md:pl-6 min-h-[220px]">
+                <h4 className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider mb-3">6 SD Status Pengawasan</h4>
+                <div className="flex-1 space-y-2.5 max-h-[200px] overflow-y-auto pr-1">
+                  {schools.length > 0 ? (
+                    schools.slice(0, 6).map((school, idx) => {
+                      const pct = school.kelengkapan_dokumen || school.progress || 0;
+                      let statusText = "URGENT 🔴";
+                      let color = "bg-red-500";
+                      let textColor = "text-red-400";
+                      let borderColor = "border-red-950 bg-red-950/20";
+                      
+                      if (pct >= 100) {
+                        statusText = "ACUAN ⭐";
+                        color = "bg-yellow-500";
+                        textColor = "text-yellow-400";
+                        borderColor = "border-yellow-950/40 bg-yellow-950/10";
+                      } else if (pct >= 60) {
+                        statusText = "IN PROGRESS 🟡";
+                        color = "bg-yellow-500";
+                        textColor = "text-yellow-400";
+                        borderColor = "border-yellow-950/40 bg-yellow-950/10";
+                      }
+
+                      return (
+                        <div key={idx} className={`p-2.5 rounded-xl border ${borderColor} flex flex-col gap-1.5`}>
+                          <div className="flex items-center justify-between text-xs font-bold text-slate-200">
+                            <span className="line-clamp-1">{school.name}</span>
+                            <span className={`text-[9px] font-mono ${textColor}`}>{statusText}</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-[10px] font-mono font-bold text-slate-400 w-8">{pct}%</span>
+                            <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
+                              <div className={`h-full ${color}`} style={{ width: `${pct}%` }}></div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-slate-500 py-8">
+                      <Loader2 className="animate-spin text-slate-500" size={16} />
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </div>

@@ -668,6 +668,40 @@ JSON Schema:
     res.json({ success: true, task });
   });
 
+  app.get("/api/sync/changes", (req, res) => {
+    const logPath = "/root/.hermes/data/audit_changes.json";
+    if (fs.existsSync(logPath)) {
+      try {
+        const raw = fs.readFileSync(logPath, "utf-8");
+        res.json({ success: true, changes: JSON.parse(raw) });
+      } catch (err: any) {
+        res.status(500).json({ success: false, message: err.message });
+      }
+    } else {
+      res.json({ success: true, changes: [] });
+    }
+  });
+
+  app.post("/api/sync/force", async (req, res) => {
+    try {
+      const scriptPath = "/root/.hermes/scripts/sync_office_to_boss.py";
+      console.log("[SYNC] Memicu sinkronisasi manual dari dashboard...");
+      
+      const { exec } = await import("child_process");
+      exec(`python3 "${scriptPath}"`, (error, stdout, stderr) => {
+        if (error) {
+          console.error(`[SYNC ERROR] ${error.message}`);
+          return;
+        }
+        console.log(`[SYNC SUCCESS] ${stdout.trim()}`);
+      });
+
+      res.json({ success: true, message: "Sinkronisasi berhasil dipicu di latar belakang." });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   // Telegram bot setup
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const isTokenValid = token && /^\d+:[a-zA-Z0-9_-]{35,}$/.test(token);

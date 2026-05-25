@@ -135,7 +135,7 @@ function parseExcelTextToSheets(text: string): Record<string, string> {
 async function startServer() {
   const app = express();
   
-  const uploadsDir = path.join(__dirname, "uploads");
+  const uploadsDir = path.join(process.cwd(), "uploads");
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir);
   }

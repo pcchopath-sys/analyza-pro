@@ -682,7 +682,27 @@ export default function App() {
                   <Activity size={16} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-slate-100">Pemantauan & Sinkronisasi Siber Kantor</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-sm font-bold text-slate-100">Pemantauan & Sinkronisasi Siber Kantor</h3>
+                    {syncStatusData?.phase === 'syncing' && (
+                      <span className="text-[9px] bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full font-mono font-bold animate-pulse flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping"></span>
+                        MENYINKRONKAN ⏳
+                      </span>
+                    )}
+                    {syncStatusData?.phase === 'done' && (
+                      <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-mono font-bold flex items-center gap-1 shadow-[0_0_10px_rgba(16,185,129,0.15)]">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                        SELARAS / SYNC ✅
+                      </span>
+                    )}
+                    {syncStatusData?.phase === 'error' && (
+                      <span className="text-[9px] bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded-full font-mono font-bold flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-400"></span>
+                        ADA ERROR ⚠️
+                      </span>
+                    )}
+                  </div>
                   <p className="text-[10px] text-slate-400 font-mono">1 Kredensial Terpadu &bull; CV Sada Jiwa (Read-Only) &bull; Pengawasan Boss (Write)</p>
                 </div>
               </div>
@@ -695,6 +715,11 @@ export default function App() {
                   <>
                     <Loader2 size={14} className="animate-spin" />
                     Menyinkronkan...
+                  </>
+                ) : syncStatusData?.phase === 'done' ? (
+                  <>
+                    <Cloud size={14} />
+                    Selaras / Synced (Ready) ⚡
                   </>
                 ) : (
                   <>
@@ -757,14 +782,14 @@ export default function App() {
                         school.name.toLowerCase().includes(s.name.toLowerCase())
                       );
 
-                      if (syncStatusData && syncStatusData.phase === 'syncing' && match) {
-                        if (match.status === 'syncing') {
+                      if (syncStatusData && match) {
+                        if (syncStatusData.phase === 'syncing' && match.status === 'syncing') {
                           statusText = "🔵 SYNCING...";
                           color = "bg-blue-500 animate-pulse";
                           textColor = "text-blue-400 font-bold";
                           borderColor = "border-blue-950 bg-blue-950/20 animate-pulse";
                         } else if (match.status === 'done') {
-                          statusText = "🟢 SYNCED";
+                          statusText = "🟢 SELARAS / SYNC";
                           color = "bg-green-500";
                           textColor = "text-green-400";
                           borderColor = "border-green-950/40 bg-green-950/10";
@@ -774,10 +799,22 @@ export default function App() {
                           textColor = "text-slate-400";
                           borderColor = "border-slate-800 bg-slate-900/30";
                         } else if (match.status === 'error') {
-                          statusText = "🔴 ERROR";
+                          statusText = "🔴 SYNC FAIL";
                           color = "bg-red-500";
                           textColor = "text-red-400";
                           borderColor = "border-red-950 bg-red-950/20";
+                        } else {
+                          if (pct >= 100) {
+                            statusText = "ACUAN ⭐";
+                            color = "bg-yellow-500";
+                            textColor = "text-yellow-400";
+                            borderColor = "border-yellow-950/40 bg-yellow-950/10";
+                          } else if (pct >= 60) {
+                            statusText = "IN PROGRESS 🟡";
+                            color = "bg-yellow-500";
+                            textColor = "text-yellow-400";
+                            borderColor = "border-yellow-950/40 bg-yellow-950/10";
+                          }
                         }
                       } else {
                         if (pct >= 100) {
@@ -793,21 +830,28 @@ export default function App() {
                         }
                       }
 
+                      const isCurrentlySyncing = syncStatusData && syncStatusData.phase === 'syncing' && match;
+
                       return (
                         <div key={idx} className={`p-2.5 rounded-xl border ${borderColor} flex flex-col gap-1.5`}>
                           <div className="flex items-center justify-between text-xs font-bold text-slate-200">
                             <span className="line-clamp-1">{school.name}</span>
                             <span className={`text-[9px] font-mono ${textColor}`}>{statusText}</span>
                           </div>
-                          {syncStatusData && syncStatusData.phase === 'syncing' && match ? (
+                          {isCurrentlySyncing ? (
                             <div className="text-[10px] font-mono text-slate-400 font-semibold">
                               {match.detail || "Menunggu..."}
                             </div>
                           ) : (
                             <div className="flex items-center gap-3">
-                              <span className="text-[10px] font-mono font-bold text-slate-400 w-8">{pct}%</span>
+                              <span className="text-[10px] font-mono font-bold text-slate-400 w-8">
+                                {match?.status === 'done' ? '100' : pct}%
+                              </span>
                               <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
-                                <div className={`h-full ${color}`} style={{ width: `${pct}%` }}></div>
+                                <div 
+                                  className={`h-full ${color}`} 
+                                  style={{ width: `${match?.status === 'done' ? 100 : pct}%` }}
+                                ></div>
                               </div>
                             </div>
                           )}
@@ -929,13 +973,16 @@ export default function App() {
                 </div>
               </div>
             ) : pdfUrl ? (
-              /* PDF Viewer standard */
-              <iframe
-                src={`${pdfUrl}#page=${activePage}`}
-                className="w-full h-full border-none bg-slate-100 border border-slate-200/60 rounded-xl animate-in fade-in"
-                title="PDF Viewer"
-                key={`${pdfUrl}-${activePage}`}
-              />
+              /* PDF Viewer standard with mobile touch-scrolling optimization wrapper */
+              <div className="w-full h-full overflow-y-auto -webkit-overflow-scrolling-touch min-h-[500px] md:min-h-0 flex-1 rounded-xl">
+                <iframe
+                  src={`${pdfUrl}#page=${activePage}`}
+                  className="w-full h-full min-h-[500px] md:min-h-full border-none bg-slate-100 border border-slate-200/60 rounded-xl animate-in fade-in"
+                  scrolling="yes"
+                  title="PDF Viewer"
+                  key={`${pdfUrl}-${activePage}`}
+                />
+              </div>
             ) : (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 p-6 text-center bg-slate-100 border border-slate-200/60 rounded-xl">
                 <FileText size={48} className="stroke-1 mb-2 animate-pulse text-blue-500/50" />
